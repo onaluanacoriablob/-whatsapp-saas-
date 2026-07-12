@@ -63,8 +63,8 @@ const isPlaceholder = (v) => !v || v.trim() === "" || /your-/.test(v);
 // ── .env parsing / writing ──────────────────────────────────────────────────
 function parseEnv(text) {
   const out = {};
-  for (const line of text.split("\n")) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line);
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([A-Z0-9_]+)=(.*)/.exec(line);
     if (m) out[m[1]] = m[2].replace(/\r$/, "");
   }
   return out;
@@ -102,7 +102,8 @@ function run(cmd, opts = {}) {
 
 function hasCli(name) {
   try {
-    execSync(`command -v ${name}`, { stdio: "ignore" });
+    const cmd = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
+    execSync(cmd, { stdio: "ignore" });
     return true;
   } catch {
     return false;
