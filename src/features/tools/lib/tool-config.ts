@@ -111,11 +111,97 @@ export const webhookFieldSchema = z.object({
 });
 export type WebhookField = z.infer<typeof webhookFieldSchema>;
 
-export const webhookConfigSchema = z.object({
-  webhook_url: HTTPS_URL,
-  payload_fields: z.array(webhookFieldSchema).max(20).default([]),
+// ── AI-completed webhook parameters ─────────────────────────────────────────────
+// Unlike payload_fields (resolved server-side from fixed tokens), these become
+// real function-calling parameters: the model fills them in from the
+// conversation, the same way schedule-highlevel.ts's schema fields work.
+
+export const aiParamSchema = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(60)
+    .regex(/^[a-zA-Z0-9_]+$/, "Solo letras, números y guion bajo"),
+  type: z.enum(["string", "number", "boolean"]),
+  description: z
+    .string()
+    .trim()
+    .min(1, "La descripción es obligatoria (es lo que lee el modelo)")
+    .max(300),
+  required: z.boolean(),
 });
+export type AiParam = z.infer<typeof aiParamSchema>;
+
+/** Reserved key: the fixed `note` field always exists on custom_webhook's schema. */
+const RESERVED_WEBHOOK_KEYS = new Set(["note"]);
+
+export const webhookConfigSchema = z
+  .object({
+    webhook_url: HTTPS_URL,
+    payload_fields: z.array(webhookFieldSchema).max(20).default([]),
+    ai_params: z.array(aiParamSchema).max(20).default([]),
+  })
+  .superRefine((val, ctx) => {
+    const payloadFieldKeys = new Map<string, number>();
+    val.payload_fields.forEach((f, idx) => {
+      if (!payloadFieldKeys.has(f.key)) payloadFieldKeys.set(f.key, idx);
+    });
+
+    const seenAiParamKeys = new Map<string, number>();
+    val.ai_params.forEach((p, idx) => {
+      if (RESERVED_WEBHOOK_KEYS.has(p.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ai_params", idx, "key"],
+          message: `"${p.key}" es un campo fijo reservado (nota del agente) — usa otro nombre`,
+        });
+        return;
+      }
+      if (payloadFieldKeys.has(p.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ai_params", idx, "key"],
+          message: `"${p.key}" ya existe como campo del payload — usa otro nombre o borra ese campo`,
+        });
+        return;
+      }
+      if (seenAiParamKeys.has(p.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ai_params", idx, "key"],
+          message: `"${p.key}" está repetido en otro parámetro IA`,
+        });
+        return;
+      }
+      seenAiParamKeys.set(p.key, idx);
+    });
+  });
 export type WebhookConfig = z.infer<typeof webhookConfigSchema>;
+
+/** Maps an AI param definition to the Zod type the model fills in. */
+function zodForAiParam(p: Pick<AiParam, "type" | "description" | "required">): z.ZodTypeAny {
+  const base: z.ZodTypeAny =
+    p.type === "number" ? z.number() : p.type === "boolean" ? z.boolean() : z.string();
+  return p.required ? base.describe(p.description) : base.optional().describe(p.description);
+}
+
+/**
+ * Builds the effective Zod schema for the custom_webhook tool: the fixed
+ * `note` field plus one field per workspace-configured ai_param. This is the
+ * schema that gets converted to JSON Schema for the model's tool-calling —
+ * see zodSchema(tool.schema) in openrouter.ts.
+ */
+export function buildCustomWebhookSchema(aiParams: AiParam[] = []) {
+  return z.object({
+    note: z
+      .string()
+      .max(500)
+      .optional()
+      .describe("Nota corta opcional para incluir en el webhook ({{note}})"),
+    ...Object.fromEntries(aiParams.map((p) => [p.key, zodForAiParam(p)])),
+  });
+}
 
 /** Maps a tool key to its config schema (undefined = no configurable fields). */
 export function configSchemaForTool(toolKey: string): z.ZodTypeAny | undefined {

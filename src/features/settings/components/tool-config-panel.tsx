@@ -6,6 +6,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   WEBHOOK_VARIABLES,
@@ -13,7 +22,14 @@ import {
   scheduleLinkConfigSchema,
   webhookConfigSchema,
   type WebhookField,
+  type AiParam,
 } from "@/features/tools/lib/tool-config";
+
+const AI_PARAM_TYPE_LABELS: Record<AiParam["type"], string> = {
+  string: "Texto",
+  number: "Número",
+  boolean: "Sí/No",
+};
 
 // ── Shared save helper ──────────────────────────────────────────────────────────
 
@@ -134,18 +150,27 @@ function WebhookForm({
   const initialFields = Array.isArray(initialConfig?.payload_fields)
     ? (initialConfig.payload_fields as WebhookField[])
     : [];
+  const initialAiParams = Array.isArray(initialConfig?.ai_params)
+    ? (initialConfig.ai_params as AiParam[])
+    : [];
 
   const [url, setUrl] = useState(initialUrl);
   const [fields, setFields] = useState<WebhookField[]>(initialFields);
+  const [aiParams, setAiParams] = useState<AiParam[]>(initialAiParams);
   const [baseline, setBaseline] = useState(() =>
-    JSON.stringify({ webhook_url: initialUrl, payload_fields: initialFields }),
+    JSON.stringify({
+      webhook_url: initialUrl,
+      payload_fields: initialFields,
+      ai_params: initialAiParams,
+    }),
   );
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const [flashed, setFlashed] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const dirty =
-    JSON.stringify({ webhook_url: url, payload_fields: fields }) !== baseline;
+    JSON.stringify({ webhook_url: url, payload_fields: fields, ai_params: aiParams }) !==
+    baseline;
 
   function updateField(idx: number, patch: Partial<WebhookField>) {
     setFields((prev) =>
@@ -157,6 +182,21 @@ function WebhookForm({
   }
   function removeField(idx: number) {
     setFields((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateAiParam(idx: number, patch: Partial<AiParam>) {
+    setAiParams((prev) =>
+      prev.map((p, i) => (i === idx ? { ...p, ...patch } : p)),
+    );
+  }
+  function addAiParam() {
+    setAiParams((prev) => [
+      ...prev,
+      { key: "", type: "string", description: "", required: false },
+    ]);
+  }
+  function removeAiParam(idx: number) {
+    setAiParams((prev) => prev.filter((_, i) => i !== idx));
   }
   function insertVariable(token: string) {
     const idx = focusedIdx ?? fields.length - 1;
@@ -181,9 +221,16 @@ function WebhookForm({
     const parsed = webhookConfigSchema.safeParse({
       webhook_url: url,
       payload_fields: fields,
+      ai_params: aiParams,
     });
     if (!parsed.success) {
-      toast.error("Revisa la URL (HTTPS) y que cada campo tenga nombre válido");
+      const flat = parsed.error.flatten();
+      const message =
+        flat.fieldErrors.ai_params?.[0] ??
+        flat.fieldErrors.payload_fields?.[0] ??
+        flat.fieldErrors.webhook_url?.[0] ??
+        "Revisa la URL (HTTPS) y que cada campo tenga nombre válido";
+      toast.error(message);
       return;
     }
     setSaving(true);
@@ -308,6 +355,98 @@ function WebhookForm({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* AI-completed parameters */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium text-foreground">
+          Parámetros IA{" "}
+          <span className="font-normal text-xs text-muted-foreground">
+            (la IA los completa)
+          </span>
+        </Label>
+        <p className="text-xs text-muted-foreground">
+          A diferencia de los campos de arriba, estos no se resuelven con un
+          valor fijo de la conversación — el modelo decide qué poner acá según
+          lo que dijo el cliente.
+        </p>
+
+        {aiParams.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            Sin parámetros IA: el agente solo puede adjuntar una nota corta.
+          </p>
+        )}
+
+        {aiParams.map((p, idx) => (
+          <div
+            key={idx}
+            className="space-y-2 rounded-md border border-border p-3"
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                value={p.key}
+                onChange={(e) => updateAiParam(idx, { key: e.target.value })}
+                placeholder="localidad"
+                className="h-8 w-1/3 font-mono text-sm"
+                aria-label={`Nombre del parámetro IA ${idx + 1}`}
+              />
+              <Select
+                value={p.type}
+                onValueChange={(v) =>
+                  updateAiParam(idx, { type: v as AiParam["type"] })
+                }
+              >
+                <SelectTrigger
+                  className="h-8 w-28 text-sm"
+                  aria-label={`Tipo del parámetro IA ${idx + 1}`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(AI_PARAM_TYPE_LABELS) as AiParam["type"][]).map(
+                    (t) => (
+                      <SelectItem key={t} value={t}>
+                        {AI_PARAM_TYPE_LABELS[t]}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Checkbox
+                  checked={p.required}
+                  onCheckedChange={(v) =>
+                    updateAiParam(idx, { required: v === true })
+                  }
+                  aria-label={`Requerido: parámetro IA ${idx + 1}`}
+                />
+                Requerido
+              </label>
+              <button
+                type="button"
+                onClick={() => removeAiParam(idx)}
+                className="ml-auto shrink-0 rounded p-1 text-muted-foreground transition-colors hover:text-destructive"
+                aria-label={`Eliminar parámetro IA ${idx + 1}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+            <Textarea
+              value={p.description}
+              onChange={(e) =>
+                updateAiParam(idx, { description: e.target.value })
+              }
+              placeholder="Qué debe completar el modelo acá, ej: la localidad o barrio donde vive el cliente"
+              className="min-h-[52px] text-sm"
+              aria-label={`Descripción del parámetro IA ${idx + 1}`}
+            />
+          </div>
+        ))}
+
+        <Button type="button" variant="outline" size="sm" onClick={addAiParam}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Agregar parámetro
+        </Button>
       </div>
 
       <div className="flex items-center gap-3">

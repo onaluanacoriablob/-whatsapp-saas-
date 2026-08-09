@@ -1,22 +1,20 @@
 import { createClient as createSbClient } from "@supabase/supabase-js";
-import { z } from "zod";
+import type { z } from "zod";
 import type { Tool, ToolContext, ToolResult } from "../core/tool";
 import { validateWebhookUrl } from "../services/ssrf-guard";
 import {
   resolveTemplate,
+  buildCustomWebhookSchema,
+  type AiParam,
   type WebhookField,
   type WebhookVariableValues,
 } from "../lib/tool-config";
 
-// The agent only decides WHEN to fire the webhook and may attach a short note;
-// the payload itself is built from the workspace-configured fields + variables.
-const schema = z.object({
-  note: z
-    .string()
-    .max(500)
-    .optional()
-    .describe("Nota corta opcional para incluir en el webhook ({{note}})"),
-});
+// The static, no-ai_params schema used when a workspace has none configured.
+// getEnabledTools() (tool-configs.ts) swaps this for a per-workspace schema
+// built from the same helper + the workspace's ai_params before the model
+// ever sees the tool — see buildCustomWebhookSchema().
+const schema = buildCustomWebhookSchema();
 
 type Args = z.infer<typeof schema>;
 
@@ -97,7 +95,11 @@ async function run(args: Args, ctx: ToolContext): Promise<ToolResult> {
 
   const config = (cfgRow as { config?: Record<string, unknown> } | null)
     ?.config as
-    | { webhook_url?: string; payload_fields?: WebhookField[] }
+    | {
+        webhook_url?: string;
+        payload_fields?: WebhookField[];
+        ai_params?: AiParam[];
+      }
     | undefined;
 
   const webhookUrl = (config?.webhook_url ?? "").trim();
@@ -129,6 +131,16 @@ async function run(args: Args, ctx: ToolContext): Promise<ToolResult> {
           last_user_message: values["last_user_message"],
           note: values.note,
         };
+
+  // Merge in the AI-completed dynamic parameters. Keys can't collide with
+  // payload_fields or `note` — that's enforced at save time (webhookConfigSchema),
+  // so both kinds of field can safely live flat in the same payload object.
+  const aiParams = Array.isArray(config?.ai_params) ? config!.ai_params : [];
+  const rawArgs = args as Record<string, unknown>;
+  for (const p of aiParams) {
+    const value = rawArgs[p.key];
+    if (value !== undefined) payload[p.key] = String(value);
+  }
 
   const res = await fetch(webhookUrl, {
     method: "POST",
