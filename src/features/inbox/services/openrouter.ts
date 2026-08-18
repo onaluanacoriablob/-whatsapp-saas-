@@ -223,7 +223,7 @@ export async function generateChatReply(params: {
         description: forgeTool.description,
         inputSchema: zodSchema(forgeTool.schema),
         execute: async (args: unknown): Promise<unknown> =>
-          registry.run(forgeTool.name, args, ctx),
+          registry.run(forgeTool, args, ctx),
       });
     }
   }
@@ -309,7 +309,7 @@ export async function generateWithTools(
       description: forgeTool.description,
       inputSchema: zodSchema(forgeTool.schema),
       execute: async (args: unknown): Promise<unknown> => {
-        return registry.run(forgeTool.name, args, ctx);
+        return registry.run(forgeTool, args, ctx);
       },
     });
   }

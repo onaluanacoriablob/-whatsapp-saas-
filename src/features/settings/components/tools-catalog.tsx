@@ -146,13 +146,18 @@ export function ToolsCatalog({ workspaceId, initialTools }: Props) {
           const isOpen = expanded === tool.id;
           const ToolIcon = TOOL_ICONS[tool.key] ?? Wrench;
           const BadgeIcon = config.Icon;
+          // custom_webhook is a family of independently-toggled instances
+          // (webhook_tools) since Phase 2 — this row's own enabled flag is
+          // legacy tool_configs state nothing reads anymore, so it can't be
+          // used for the row's on/off styling or exposed as a single switch.
+          const isWebhookFamily = tool.key === "custom_webhook";
 
           return (
             <li
               key={tool.id}
               className={cn(
                 "rounded-lg border border-border/60 p-4 transition-colors duration-150 hover:border-primary/30",
-                tool.enabled ? "bg-card" : "bg-muted/30",
+                isWebhookFamily || tool.enabled ? "bg-card" : "bg-muted/30",
               )}
             >
               <div className="flex items-start justify-between gap-4">
@@ -203,12 +208,18 @@ export function ToolsCatalog({ workspaceId, initialTools }: Props) {
                   )}
                 </div>
 
-                <Switch
-                  checked={tool.enabled}
-                  onCheckedChange={() => handleToggle(tool)}
-                  disabled={isToggling}
-                  aria-label={`${tool.enabled ? "Desactivar" : "Activar"} ${tool.name}`}
-                />
+                {isWebhookFamily ? (
+                  <span className="max-w-[110px] shrink-0 text-right text-[11px] text-muted-foreground">
+                    Se activa por tool abajo
+                  </span>
+                ) : (
+                  <Switch
+                    checked={tool.enabled}
+                    onCheckedChange={() => handleToggle(tool)}
+                    disabled={isToggling}
+                    aria-label={`${tool.enabled ? "Desactivar" : "Activar"} ${tool.name}`}
+                  />
+                )}
               </div>
 
               {configurable && isOpen && (

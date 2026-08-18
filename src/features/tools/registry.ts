@@ -87,17 +87,23 @@ class ToolRegistry {
     return this.tools.get(name);
   }
 
+  /**
+   * Executes a resolved Tool instance directly — the caller (openrouter.ts)
+   * already holds the exact Tool object the model was offered (from
+   * getEnabledTools(), which includes dynamically-named webhook_tools
+   * instances that never live in `this.tools`), so re-resolving by name
+   * through the static registry Map would fail to find them. Static tools
+   * (echo, schedule_link, ...) go through this same path unchanged — they
+   * just happen to be the Tool object that `this.tools.get(name)` would
+   * also have returned.
+   */
   async run(
-    name: string,
+    tool: Tool,
     args: unknown,
     ctx: ToolContext,
     opts?: ToolRunOptions,
   ): Promise<ToolResult> {
-    const tool = this.tools.get(name);
-    if (!tool) {
-      return { ok: false, output: null, error: `Tool "${name}" not found` };
-    }
-
+    const name = tool.name;
     const parsed = tool.schema.safeParse(args);
     if (!parsed.success) {
       return { ok: false, output: null, error: parsed.error.message };
