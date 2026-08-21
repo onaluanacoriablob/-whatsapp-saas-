@@ -3,6 +3,7 @@
 import { createClient as createSbClient } from "@supabase/supabase-js";
 import { createOpenAI } from "@ai-sdk/openai";
 import { embed, embedMany } from "ai";
+import { getOpenRouterApiKey } from "./openrouter";
 
 function svc() {
   return createSbClient(
@@ -11,10 +12,16 @@ function svc() {
   );
 }
 
-function getEmbeddingModel() {
+// Embeddings must use the same per-workspace OpenRouter key as chat
+// completions (getOpenRouterApiKey falls back to the env var only when no
+// workspace key is configured) — this used to hardcode process.env.OPENROUTER_API_KEY
+// directly, so a workspace with its own key still hit the (possibly invalid)
+// global env key here and failed with an uncaught embedding error.
+async function getEmbeddingModel(workspaceId?: string) {
+  const apiKey = await getOpenRouterApiKey(workspaceId);
   const openai = createOpenAI({
     baseURL: "https://openrouter.ai/api/v1",
-    apiKey: process.env.OPENROUTER_API_KEY!,
+    apiKey,
   });
   return openai.embedding("openai/text-embedding-3-small");
 }
@@ -42,10 +49,10 @@ function chunkText(text: string): string[] {
 
 /**
  * Returns true when embedding calls should be skipped.
- * Graceful degradation when OPENROUTER_API_KEY is a placeholder.
+ * Graceful degradation when no OpenRouter key (workspace or env) is configured.
  */
-function isEmbeddingDisabled(): boolean {
-  const key = process.env.OPENROUTER_API_KEY ?? "";
+async function isEmbeddingDisabled(workspaceId?: string): Promise<boolean> {
+  const key = await getOpenRouterApiKey(workspaceId);
   return !key || key === "placeholder";
 }
 
@@ -106,14 +113,14 @@ export async function ingestDocument(opts: {
   // 3. Embed chunks (or use empty vectors when disabled)
   let embeddings: number[][];
 
-  if (isEmbeddingDisabled()) {
+  if (await isEmbeddingDisabled(workspaceId)) {
     console.warn(
-      "[kb-service] OPENROUTER_API_KEY is placeholder — storing chunks without embeddings",
+      "[kb-service] no OpenRouter key configured — storing chunks without embeddings",
     );
     embeddings = chunks.map(() => new Array(1536).fill(0) as number[]);
   } else {
     const result = await embedMany({
-      model: getEmbeddingModel(),
+      model: await getEmbeddingModel(workspaceId),
       values: chunks,
     });
     embeddings = result.embeddings;
@@ -159,9 +166,9 @@ export async function searchKb(
   query: string,
   topK = 3,
 ): Promise<KbSearchResult[]> {
-  if (isEmbeddingDisabled()) {
+  if (await isEmbeddingDisabled(workspaceId)) {
     console.warn(
-      "[kb-service] OPENROUTER_API_KEY is placeholder — KB search unavailable",
+      "[kb-service] no OpenRouter key configured — KB search unavailable",
     );
     return [];
   }
@@ -170,7 +177,7 @@ export async function searchKb(
 
   // Embed the query
   const { embedding: queryEmbedding } = await embed({
-    model: getEmbeddingModel(),
+    model: await getEmbeddingModel(workspaceId),
     value: query,
   });
 
