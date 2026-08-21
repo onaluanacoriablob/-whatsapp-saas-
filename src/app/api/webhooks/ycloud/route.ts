@@ -4,12 +4,16 @@ import {
   verifyYCloudSignature,
   parseInbound,
 } from "@/features/inbox/services/ycloud-webhook-handler";
-import { processInbound } from "@/features/inbox/services/normalizer";
+import {
+  processInbound,
+  normalizePhone,
+} from "@/features/inbox/services/normalizer";
 import { checkRateLimits } from "@/features/inbox/services/cost-tracker";
 import {
   upsertBatch,
   processNextBatch,
 } from "@/features/inbox/services/buffer";
+import { applyTransition } from "@/features/inbox/services/decision-engine";
 import {
   downloadAndStoreMedia,
   patchMessageMedia,
@@ -255,6 +259,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!conversation.ai_enabled) {
       if (mediaJob) after(mediaJob);
       return NextResponse.json({ received: true, ai: false });
+    }
+
+    // Test mode: workspace can restrict AI auto-reply to an allowlist of
+    // numbers. Non-listed contacts still land in the inbox — the AI just
+    // sleeps on them, same as a human manually taking over the thread.
+    const testConfig = ws.config as {
+      modo_prueba?: boolean;
+      test_phone_numbers?: string[];
+    };
+    if (testConfig.modo_prueba) {
+      const allowedNumbers = (testConfig.test_phone_numbers ?? []).map((n) =>
+        normalizePhone(String(n)),
+      );
+      if (!allowedNumbers.includes(contact.phone)) {
+        if (mediaJob) after(mediaJob);
+        try {
+          await applyTransition(conversation.id, "human_active");
+        } catch (e) {
+          // Non-fatal: most likely already human_active or a terminal state.
+          console.warn(
+            "[webhook] test-mode handoff skipped:",
+            e instanceof Error ? e.message : e,
+          );
+        }
+        return NextResponse.json({ received: true, testMode: true });
+      }
     }
 
     // Rate-limit check — still runs here to avoid buffering rate-limited contacts

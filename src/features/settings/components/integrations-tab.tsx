@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { ModelPicker } from "@/features/agents/components/model-picker";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -124,6 +125,14 @@ function YCloudSection({
   const [messagesInMemory, setMessagesInMemory] = useState<number>(
     (initial?.config?.message_history_window as number | undefined) ?? 10,
   );
+  const [modoPrueba, setModoPrueba] = useState<boolean>(
+    (initial?.config?.modo_prueba as boolean | undefined) ?? false,
+  );
+  const [testPhoneNumbers, setTestPhoneNumbers] = useState<string>(
+    ((initial?.config?.test_phone_numbers as string[] | undefined) ?? []).join(
+      ", ",
+    ),
+  );
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -186,6 +195,11 @@ function YCloudSection({
             phone_number: phone,
             buffer_silence_seconds: bufferSeconds,
             message_history_window: messagesInMemory,
+            modo_prueba: modoPrueba,
+            test_phone_numbers: testPhoneNumbers
+              .split(/[,\n]/)
+              .map((n) => n.trim())
+              .filter(Boolean),
           },
         }),
       });
@@ -315,6 +329,41 @@ function YCloudSection({
             Cuántos mensajes recientes recuerda la IA al responder (entre 5 y
             50). Por defecto 10.
           </p>
+        </div>
+
+        <Separator />
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="ycloud-modo-prueba">Modo prueba</Label>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Mientras está activo, la IA solo responde a los números
+                listados abajo. Los demás mensajes se guardan en el inbox pero
+                quedan para intervención humana (igual que al pausar la IA
+                manualmente).
+              </p>
+            </div>
+            <Switch
+              id="ycloud-modo-prueba"
+              checked={modoPrueba}
+              onCheckedChange={setModoPrueba}
+            />
+          </div>
+
+          {modoPrueba && (
+            <div className="space-y-2">
+              <Label htmlFor="ycloud-test-numbers">
+                Números de prueba (E.164, separados por coma)
+              </Label>
+              <Input
+                id="ycloud-test-numbers"
+                placeholder="+521234567890, +5215512345678"
+                value={testPhoneNumbers}
+                onChange={(e) => setTestPhoneNumbers(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2 pt-2">
