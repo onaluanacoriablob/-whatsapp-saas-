@@ -118,48 +118,51 @@ export async function POST(
     guardrails = resolved?.guardrails ?? null;
   }
 
-  // Mirror production (buffer.ts) exactly via the shared builder: business info,
-  // KB search, response style, variable substitution and strict guardrails.
-  const info = await getBusinessInfo(workspaceId);
-  const businessName =
-    ((info?.structured as { name?: string } | null)?.name as string) ??
-    "tu negocio";
-  const bizContext = buildBusinessInfoContext(info);
-  const timeZone =
-    ((info?.structured as { timezone?: string } | null)?.timezone as string) ??
-    "America/Mexico_City";
-
-  // KB: search with the latest user message, just like buffer.ts.
-  const lastUserMessage =
-    [...parsed.data.messages].reverse().find((m) => m.role === "user")
-      ?.content ?? "";
-  const [kbResults, kbLinks] = await Promise.all([
-    searchKb(workspaceId, lastUserMessage, 3),
-    listKbSourceLinks(workspaceId),
-  ]);
-  const kbContext = [
-    formatKbContext(kbResults),
-    formatKbReferenceLinks(kbLinks),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-
-  const agentConfig = (agent.config ?? {}) as AgentConfig;
-  const systemPrompt = buildSystemPrompt({
-    nowContext: buildNowContext(timeZone),
-    bizContext,
-    promptBase: promptBody,
-    kbContext,
-    responseStyle: agentConfig.responseStyle ?? null,
-    guardrails,
-    vars: {
-      agentName: agent.name as string,
-      businessName,
-      contactName: "",
-    },
-  });
-
   try {
+    // Mirror production (buffer.ts) exactly via the shared builder: business info,
+    // KB search, response style, variable substitution and strict guardrails.
+    // Wrapped in the same try/catch as the LLM call below — any failure here
+    // (e.g. the KB embedding call to OpenRouter) used to throw uncaught and
+    // produce a bare empty-body 500 instead of a diagnosable JSON error.
+    const info = await getBusinessInfo(workspaceId);
+    const businessName =
+      ((info?.structured as { name?: string } | null)?.name as string) ??
+      "tu negocio";
+    const bizContext = buildBusinessInfoContext(info);
+    const timeZone =
+      ((info?.structured as { timezone?: string } | null)
+        ?.timezone as string) ?? "America/Mexico_City";
+
+    // KB: search with the latest user message, just like buffer.ts.
+    const lastUserMessage =
+      [...parsed.data.messages].reverse().find((m) => m.role === "user")
+        ?.content ?? "";
+    const [kbResults, kbLinks] = await Promise.all([
+      searchKb(workspaceId, lastUserMessage, 3),
+      listKbSourceLinks(workspaceId),
+    ]);
+    const kbContext = [
+      formatKbContext(kbResults),
+      formatKbReferenceLinks(kbLinks),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const agentConfig = (agent.config ?? {}) as AgentConfig;
+    const systemPrompt = buildSystemPrompt({
+      nowContext: buildNowContext(timeZone),
+      bizContext,
+      promptBase: promptBody,
+      kbContext,
+      responseStyle: agentConfig.responseStyle ?? null,
+      guardrails,
+      vars: {
+        agentName: agent.name as string,
+        businessName,
+        contactName: "",
+      },
+    });
+
     // Enable the workspace's tools in the playground so the agent can actually
     // check availability / book (e.g. GHL). The playground has no live
     // conversation, so the tool context carries only the workspace; tools that
