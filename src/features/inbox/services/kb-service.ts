@@ -149,6 +149,82 @@ export async function ingestDocument(opts: {
   return { documentId, chunksCreated: chunks.length };
 }
 
+/**
+ * Updates a document's title and content, then rebuilds its chunks.
+ *
+ * The chunks carry the embeddings the semantic search actually matches on, so
+ * editing the content without re-chunking would leave the agent answering from
+ * the old text. Old chunks are deleted and regenerated in full.
+ */
+export async function updateDocument(opts: {
+  workspaceId: string;
+  documentId: string;
+  title: string;
+  content: string;
+}): Promise<{ chunksCreated: number }> {
+  const supabase = svc();
+  const { workspaceId, documentId, title, content } = opts;
+
+  const { error: updateError } = await supabase
+    .from("kb_documents")
+    .update({ title, content, updated_at: new Date().toISOString() })
+    .eq("id", documentId)
+    .eq("workspace_id", workspaceId);
+
+  if (updateError) {
+    throw new Error(
+      `[kb-service] failed to update document: ${updateError.message}`,
+    );
+  }
+
+  const { error: deleteError } = await supabase
+    .from("kb_chunks")
+    .delete()
+    .eq("document_id", documentId)
+    .eq("workspace_id", workspaceId);
+
+  if (deleteError) {
+    throw new Error(
+      `[kb-service] failed to clear old chunks: ${deleteError.message}`,
+    );
+  }
+
+  const chunks = chunkText(content);
+  if (chunks.length === 0) return { chunksCreated: 0 };
+
+  let embeddings: number[][];
+  if (await isEmbeddingDisabled(workspaceId)) {
+    console.warn(
+      "[kb-service] no OpenRouter key configured — storing chunks without embeddings",
+    );
+    embeddings = chunks.map(() => new Array(1536).fill(0) as number[]);
+  } else {
+    const result = await embedMany({
+      model: await getEmbeddingModel(workspaceId),
+      values: chunks,
+    });
+    embeddings = result.embeddings;
+  }
+
+  const { error: chunkError } = await supabase.from("kb_chunks").insert(
+    chunks.map((chunkContent, idx) => ({
+      workspace_id: workspaceId,
+      document_id: documentId,
+      chunk_index: idx,
+      content: chunkContent,
+      embedding: embeddings[idx],
+    })),
+  );
+
+  if (chunkError) {
+    throw new Error(
+      `[kb-service] failed to insert chunks: ${chunkError.message}`,
+    );
+  }
+
+  return { chunksCreated: chunks.length };
+}
+
 export interface KbSearchResult {
   chunk: string;
   document_title: string;

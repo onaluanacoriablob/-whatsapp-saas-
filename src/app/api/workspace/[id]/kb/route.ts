@@ -7,6 +7,7 @@ import { createClient as createSvcClient } from "@supabase/supabase-js";
 import {
   ingestDocument,
   listKbDocuments,
+  updateDocument,
 } from "@/features/inbox/services/kb-service";
 import { fetchUrlText } from "@/features/inbox/services/url-scraper";
 
@@ -151,6 +152,89 @@ export async function POST(
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (err) {
     console.error("[POST /api/workspace/[id]/kb]:", err);
+    return NextResponse.json(
+      { error: "Error interno del servidor" },
+      { status: 500 },
+    );
+  }
+}
+
+// ── PATCH /api/workspace/[id]/kb ──────────────────────────────────────────────
+
+const UpdateSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1).max(500),
+  content: z.string().min(1).max(500_000),
+});
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id: workspaceId } = await params;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
+
+  const member = await resolveWorkspaceMember(supabase, workspaceId, user.id);
+  if (!member) {
+    return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
+  }
+
+  if (!["admin", "manager"].includes(member.role as string)) {
+    return NextResponse.json(
+      { error: "Se requiere rol admin o manager" },
+      { status: 403 },
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Body inválido" }, { status: 400 });
+  }
+
+  const parsed = UpdateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  // Confirm the document belongs to this workspace before touching it.
+  const { data: existing } = await svc()
+    .from("kb_documents")
+    .select("id")
+    .eq("id", parsed.data.id)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  if (!existing) {
+    return NextResponse.json(
+      { error: "Documento no encontrado" },
+      { status: 404 },
+    );
+  }
+
+  try {
+    const result = await updateDocument({
+      workspaceId,
+      documentId: parsed.data.id,
+      title: parsed.data.title,
+      content: parsed.data.content,
+    });
+    return NextResponse.json({ data: result });
+  } catch (err) {
+    console.error("[PATCH /api/workspace/[id]/kb]:", err);
     return NextResponse.json(
       { error: "Error interno del servidor" },
       { status: 500 },

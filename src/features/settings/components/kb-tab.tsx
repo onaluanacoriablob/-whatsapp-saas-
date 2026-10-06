@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Plus,
   Trash2,
+  Pencil,
   Loader2,
   BookOpen,
   AlertCircle,
@@ -61,12 +62,18 @@ function formatDate(iso: string): string {
 function DocumentRow({
   doc,
   onDelete,
+  onSave,
 }: {
   doc: KbDocument;
   onDelete: (id: string) => Promise<void>;
+  onSave: (id: string, title: string, content: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(doc.title);
+  const [draftContent, setDraftContent] = useState(doc.content ?? "");
+  const [saving, setSaving] = useState(false);
 
   const sourceType = (doc.source_type as SourceType) ?? "doc";
   const colorClass = SOURCE_TYPE_COLORS[sourceType] ?? SOURCE_TYPE_COLORS.doc;
@@ -78,6 +85,26 @@ function DocumentRow({
       await onDelete(doc.id);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  function startEditing() {
+    setDraftTitle(doc.title);
+    setDraftContent(doc.content ?? "");
+    setEditing(true);
+    setExpanded(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave(doc.id, draftTitle.trim(), draftContent.trim());
+      setEditing(false);
+    } catch {
+      // onSave already surfaced the error — stay in edit mode so the draft
+      // isn't lost.
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -126,6 +153,16 @@ function DocumentRow({
 
         <button
           type="button"
+          onClick={startEditing}
+          disabled={editing}
+          aria-label={`Editar documento ${doc.title}`}
+          className="ml-2 shrink-0 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+        >
+          <Pencil className="h-4 w-4" aria-hidden />
+        </button>
+
+        <button
+          type="button"
           onClick={handleDelete}
           disabled={deleting}
           aria-label={`Eliminar documento ${doc.title}`}
@@ -142,19 +179,80 @@ function DocumentRow({
 
       {expanded && (
         <div className="border-t border-border/60 bg-muted/20 p-4">
-          {doc.content ? (
-            <p className="whitespace-pre-wrap text-xs text-muted-foreground leading-relaxed">
-              {doc.content}
-            </p>
+          {editing ? (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor={`kb-edit-title-${doc.id}`}>Título</Label>
+                <Input
+                  id={`kb-edit-title-${doc.id}`}
+                  value={draftTitle}
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`kb-edit-content-${doc.id}`}>Contenido</Label>
+                <Textarea
+                  id={`kb-edit-content-${doc.id}`}
+                  value={draftContent}
+                  onChange={(e) => setDraftContent(e.target.value)}
+                  rows={14}
+                  className="resize-y font-mono text-xs"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Al guardar se regeneran los chunks y embeddings, así la IA
+                responde con el texto nuevo.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={
+                    saving || !draftTitle.trim() || !draftContent.trim()
+                  }
+                  aria-busy={saving}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2
+                        className="h-4 w-4 mr-2 animate-spin"
+                        aria-hidden
+                      />
+                      Guardando…
+                    </>
+                  ) : (
+                    "Guardar"
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
           ) : (
-            <p className="text-xs text-muted-foreground">
-              Este documento no tiene contenido de texto.
-            </p>
-          )}
-          {chunkCount !== null && (
-            <p className="mt-3 text-xs text-muted-foreground/70">
-              {chunkCount} chunk(s) indexados para búsqueda semántica.
-            </p>
+            <>
+              {doc.content ? (
+                <p className="whitespace-pre-wrap text-xs text-muted-foreground leading-relaxed">
+                  {doc.content}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Este documento no tiene contenido de texto.
+                </p>
+              )}
+              {chunkCount !== null && (
+                <p className="mt-3 text-xs text-muted-foreground/70">
+                  {chunkCount} chunk(s) indexados para búsqueda semántica.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
@@ -251,6 +349,29 @@ export function KbTab({ workspaceId }: Props) {
       toast.error(err instanceof Error ? err.message : "Error al agregar");
     } finally {
       setIsAdding(false);
+    }
+  }
+
+  async function handleSave(id: string, title: string, content: string) {
+    try {
+      const res = await fetch(`/api/workspace/${workspaceId}/kb`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title, content }),
+      });
+      const json = (await res.json()) as {
+        data?: { chunksCreated: number };
+        error?: unknown;
+      };
+      if (!res.ok) throw new Error("Error al guardar el documento");
+
+      toast.success(
+        `Documento actualizado — ${json.data?.chunksCreated ?? 0} chunks regenerados`,
+      );
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al guardar");
+      throw err;
     }
   }
 
@@ -454,7 +575,12 @@ export function KbTab({ workspaceId }: Props) {
         ) : (
           <ul className="space-y-2" role="list">
             {documents.map((doc) => (
-              <DocumentRow key={doc.id} doc={doc} onDelete={handleDelete} />
+              <DocumentRow
+                key={doc.id}
+                doc={doc}
+                onDelete={handleDelete}
+                onSave={handleSave}
+              />
             ))}
           </ul>
         )}
