@@ -77,6 +77,65 @@ export async function sendText(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// sendImage
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface SendImageParams {
+  apiKey: string;
+  from: string;
+  to: string;
+  imageUrl: string;
+  caption?: string;
+}
+
+/**
+ * Sends an image message (by public URL) via the YCloud WhatsApp API.
+ * Throws YCloudError on non-2xx responses.
+ */
+export async function sendImage(
+  params: SendImageParams,
+): Promise<SendTextResult> {
+  const { apiKey, from, to, imageUrl, caption } = params;
+
+  const response = await fetch(YCLOUD_MESSAGES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey,
+    },
+    body: JSON.stringify({
+      type: "image",
+      from,
+      to,
+      image: { link: imageUrl, ...(caption ? { caption } : {}) },
+    }),
+  });
+
+  let responseBody: unknown;
+  try {
+    responseBody = await response.json();
+  } catch {
+    responseBody = null;
+  }
+
+  if (!response.ok) {
+    throw new YCloudError(
+      response.status,
+      responseBody,
+      `YCloud API error ${response.status}`,
+    );
+  }
+
+  const data = responseBody as Record<string, unknown>;
+
+  return {
+    id: typeof data.id === "string" ? data.id : "",
+    wamid: typeof data.wamid === "string" ? data.wamid : "",
+    status: typeof data.status === "string" ? data.status : "accepted",
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // sendTemplate
 // ──────────────────────────────────────────────────────────────────────────────
 

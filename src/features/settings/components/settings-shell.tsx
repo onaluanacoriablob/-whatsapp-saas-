@@ -8,6 +8,7 @@ import { TeamTab } from "./team-tab";
 import { TemplatesTab } from "./templates-tab";
 import { AutomationsTab } from "./automations-tab";
 import { KbTab } from "./kb-tab";
+import { ProductPhotosSection } from "./product-photos-section";
 import { AgentsTab } from "@/features/agents/components/agents-tab";
 import type { AgentDto } from "@/features/agents/types";
 
@@ -110,6 +111,9 @@ export function SettingsShell({
         <TabsContent value="knowledge-base">
           <div className="p-6 space-y-6 rounded-lg border border-border/60 bg-card">
             <KbTab workspaceId={workspaceId} />
+          </div>
+          <div className="mt-6 p-6 space-y-6 rounded-lg border border-border/60 bg-card">
+            <ProductPhotosSection workspaceId={workspaceId} />
           </div>
         </TabsContent>
 

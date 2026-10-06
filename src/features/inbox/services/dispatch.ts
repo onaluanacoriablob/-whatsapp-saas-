@@ -1,12 +1,13 @@
 /**
  * dispatch.ts — SEC-04 single exit point for ALL outbound messages.
  *
- * ONLY dispatchText and dispatchTemplate should call sendText / sendTemplate.
- * No other module should invoke those functions directly for user-facing sends.
+ * ONLY dispatchText, dispatchImage and dispatchTemplate should call
+ * sendText / sendImage / sendTemplate. No other module should invoke those
+ * functions directly for user-facing sends.
  */
 
 import { createClient as createSbClient } from "@supabase/supabase-js";
-import { sendText, sendTemplate } from "./ycloud-client";
+import { sendText, sendImage, sendTemplate } from "./ycloud-client";
 import type { TemplateParams } from "./ycloud-client";
 import { formatWhatsAppMarkdown } from "./text-formatter";
 
@@ -29,6 +30,15 @@ export interface DispatchTextParams {
   senderUserId?: string;
   /** Admin bypass for expired window — triggers a WINDOW_OVERRIDE DB log */
   overrideAdmin?: boolean;
+}
+
+export interface DispatchImageParams {
+  workspaceId: string;
+  conversationId: string;
+  imageUrl: string;
+  caption?: string;
+  /** null = AI-generated, set = human agent */
+  senderUserId?: string;
 }
 
 export interface DispatchTemplateParams {
@@ -246,6 +256,123 @@ export async function dispatchText(
 
   if (insertError) {
     // Surface DB trigger errors (WINDOW_EXPIRED raised by trigger)
+    console.error("[dispatch] message insert error:", insertError.message);
+    return { ok: false, error: insertError.message };
+  }
+
+  // 6. Refresh conversation last_message_at
+  await supabase
+    .from("conversations")
+    .update({ last_message_at: new Date().toISOString() })
+    .eq("id", conversationId);
+
+  return { ok: true, wamid };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// dispatchImage — sends an outbound image message (by public URL)
+// ──────────────────────────────────────────────────────────────────────────────
+export async function dispatchImage(
+  params: DispatchImageParams,
+): Promise<DispatchResult> {
+  const { workspaceId, conversationId, imageUrl, caption, senderUserId } =
+    params;
+
+  const supabase = svc();
+
+  // 1. Load conversation window + contact phone
+  const { window_expires_at, toPhone } = await loadConversationAndPhone(
+    conversationId,
+    supabase,
+  );
+
+  // SEC-10: Block outbound to opted-out contacts
+  const { data: convRow } = await supabase
+    .from("conversations")
+    .select("contact_id")
+    .eq("id", conversationId)
+    .single();
+
+  if (convRow) {
+    const { data: contactOptData } = await supabase
+      .from("contacts")
+      .select("opt_in")
+      .eq("id", (convRow as { contact_id: string }).contact_id)
+      .single();
+
+    if (
+      contactOptData &&
+      (contactOptData as { opt_in: boolean }).opt_in === false
+    ) {
+      return {
+        ok: false,
+        error: "OPT_OUT: contact has opted out of WhatsApp messages",
+      };
+    }
+  }
+
+  // 2. App-level 24h window guard (DB trigger is the final enforcer)
+  if (window_expires_at !== null && new Date() > new Date(window_expires_at)) {
+    return { ok: false, error: "WINDOW_EXPIRED" };
+  }
+
+  // 3. Load YCloud credentials
+  const { apiKey, fromPhone } = await loadIntegration(workspaceId, supabase);
+
+  // 4. Send via YCloud (skip if placeholder / dev mode)
+  let wamid: string | undefined;
+  let ycloudId: string | undefined;
+  const realSend = Boolean(apiKey && apiKey !== "placeholder");
+
+  if (realSend) {
+    try {
+      const sent = await sendImage({
+        apiKey,
+        from: fromPhone,
+        to: toPhone,
+        imageUrl,
+        caption,
+      });
+      wamid = sent.wamid || undefined;
+      ycloudId = sent.id || undefined;
+    } catch (sendErr) {
+      const errMsg =
+        sendErr instanceof Error ? sendErr.message : String(sendErr);
+      console.error("[dispatch] YCloud sendImage error:", errMsg);
+
+      await supabase.from("messages").insert({
+        workspace_id: workspaceId,
+        conversation_id: conversationId,
+        direction: "out",
+        type: "image",
+        body: caption ?? null,
+        status: "failed",
+        sender_user_id: senderUserId ?? null,
+        meta: { error: errMsg, media_url: imageUrl },
+      });
+
+      return { ok: false, error: errMsg };
+    }
+  }
+
+  // 5. Persist outbound message
+  const { error: insertError } = await supabase.from("messages").insert({
+    workspace_id: workspaceId,
+    conversation_id: conversationId,
+    direction: "out",
+    type: "image",
+    body: caption ?? null,
+    wamid: wamid ?? null,
+    status: realSend ? "sent" : "queued",
+    sender_user_id: senderUserId ?? null,
+    meta: {
+      dev_mode: realSend ? undefined : true,
+      ycloud_id: ycloudId,
+      media_url: imageUrl,
+    },
+  });
+
+  if (insertError) {
     console.error("[dispatch] message insert error:", insertError.message);
     return { ok: false, error: insertError.message };
   }
