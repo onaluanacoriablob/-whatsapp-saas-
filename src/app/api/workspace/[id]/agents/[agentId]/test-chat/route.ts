@@ -22,6 +22,7 @@ import {
   buildBusinessInfoContext,
   buildNowContext,
 } from "@/features/inbox/services/business-info";
+import { listProductImageLabels } from "@/features/inbox/services/product-images";
 import { getEnabledTools } from "@/features/tools/services/tool-configs";
 import type { AgentConfig } from "@/features/agents/types";
 
@@ -137,9 +138,10 @@ export async function POST(
     const lastUserMessage =
       [...parsed.data.messages].reverse().find((m) => m.role === "user")
         ?.content ?? "";
-    const [kbResults, kbLinks] = await Promise.all([
+    const [kbResults, kbLinks, photoLabels] = await Promise.all([
       searchKb(workspaceId, lastUserMessage, 3),
       listKbSourceLinks(workspaceId),
+      listProductImageLabels(workspaceId),
     ]);
     const kbContext = [
       formatKbContext(kbResults),
@@ -156,6 +158,7 @@ export async function POST(
       kbContext,
       responseStyle: agentConfig.responseStyle ?? null,
       guardrails,
+      photoLabels,
       vars: {
         agentName: agent.name as string,
         businessName,

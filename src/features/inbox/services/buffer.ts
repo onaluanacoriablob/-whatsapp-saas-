@@ -6,6 +6,7 @@ import { decide, applyTransition } from "./decision-engine";
 import type { ToolContext } from "@/features/tools/core/tool";
 import { resolveSystemPrompt } from "./prompt-resolver";
 import { buildSystemPrompt } from "./prompt-builder";
+import { listProductImageLabels } from "./product-images";
 import { getActiveAgent } from "@/features/agents/services/active-agent";
 import { maybeAutoProcess } from "@/features/agents/services/auto-tagging";
 import {
@@ -334,7 +335,7 @@ export async function processNextBatch(): Promise<ProcessBatchResult> {
     // The active agent (if any) selects its mode-scoped published prompt; the
     // resolver falls back to the global prompt when there is no active agent.
     const activeAgent = await getActiveAgent(batch.workspace_id);
-    const [resolvedPrompt, businessInfo, kbResults, kbLinks] =
+    const [resolvedPrompt, businessInfo, kbResults, kbLinks, photoLabels] =
       await Promise.all([
         resolveSystemPrompt(
           batch.workspace_id,
@@ -343,6 +344,7 @@ export async function processNextBatch(): Promise<ProcessBatchResult> {
         getBusinessInfo(batch.workspace_id),
         searchKb(batch.workspace_id, mergedText, 3),
         listKbSourceLinks(batch.workspace_id),
+        listProductImageLabels(batch.workspace_id),
       ]);
 
     const kbContext = [
@@ -376,6 +378,7 @@ export async function processNextBatch(): Promise<ProcessBatchResult> {
       kbContext,
       responseStyle: activeAgent?.config.responseStyle ?? null,
       guardrails: resolvedPrompt?.guardrails ?? null,
+      photoLabels,
       vars: {
         agentName: activeAgent?.name ?? null,
         businessName: structured?.name ?? null,

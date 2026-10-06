@@ -6,7 +6,8 @@
  *
  * Order (guardrails go LAST — models obey end-of-prompt instructions most):
  *   now → summary → business info → knowledge base → response style →
- *   prompt base → WhatsApp format note → strict rules/restrictions
+ *   prompt base → WhatsApp format note → media note → photo labels →
+ *   strict rules/restrictions
  */
 
 export type ResponseStyle = "concise" | "balanced" | "detailed";
@@ -33,6 +34,8 @@ export interface BuildSystemPromptParts {
   responseStyle?: ResponseStyle | null;
   guardrails?: PromptGuardrails | null;
   vars?: SystemPromptVars;
+  /** Labels with photos loaded, so the model only asks send_photo for real ones. */
+  photoLabels?: string[] | null;
 }
 
 // "balanced" is the natural default → no block, keeps the prompt lean.
@@ -59,6 +62,18 @@ const MEDIA_CAPABILITY_NOTE =
   "imágenes se describen automáticamente: lo que lees ya incluye su contenido. " +
   "Respóndelo con normalidad. NUNCA digas que no puedes escuchar audios/notas " +
   "de voz ni ver imágenes — sí puedes, ya te llegan convertidos a texto.";
+
+function buildPhotoLabelsBlock(labels: string[] | null | undefined): string {
+  const clean = (labels ?? []).map((l) => l.trim()).filter(Boolean);
+  if (clean.length === 0) return "";
+  return (
+    "## Fotos que podés enviar\n" +
+    "Con la tool `send_photo` enviás la foto real al cliente. Fotos cargadas: " +
+    clean.join(", ") +
+    ".\nUsá exactamente uno de esos nombres. Si el cliente pide algo que no está " +
+    "en la lista, no afirmes que le mandás la foto: decile que esa no la tenés disponible."
+  );
+}
 
 export function substituteVars(text: string, vars?: SystemPromptVars): string {
   if (!vars) return text;
@@ -112,6 +127,7 @@ export function buildSystemPrompt(parts: BuildSystemPromptParts): string {
     base,
     WHATSAPP_FORMAT_NOTE,
     MEDIA_CAPABILITY_NOTE,
+    buildPhotoLabelsBlock(parts.photoLabels),
     guardrailsBlock,
   ]
     .filter(Boolean)
