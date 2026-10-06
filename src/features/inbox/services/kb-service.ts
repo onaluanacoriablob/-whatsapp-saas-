@@ -331,7 +331,7 @@ export async function listKbDocuments(workspaceId: string): Promise<unknown[]> {
 
   const { data, error } = await supabase
     .from("kb_documents")
-    .select("id, title, source_type, meta, created_at")
+    .select("id, title, source_type, content, meta, created_at")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: false });
 

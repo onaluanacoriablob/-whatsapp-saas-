@@ -27,13 +27,9 @@ interface KbDocument {
   id: string;
   title: string;
   source_type: string;
+  content: string;
   meta: Record<string, unknown> | null;
   created_at: string;
-}
-
-interface KbChunk {
-  chunk_index: number;
-  content: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -70,29 +66,11 @@ function DocumentRow({
   onDelete: (id: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [chunks, setChunks] = useState<KbChunk[] | null>(null);
-  const [loadingChunks, setLoadingChunks] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const sourceType = (doc.source_type as SourceType) ?? "doc";
   const colorClass = SOURCE_TYPE_COLORS[sourceType] ?? SOURCE_TYPE_COLORS.doc;
   const label = SOURCE_TYPE_LABELS[sourceType] ?? doc.source_type;
-
-  async function handleExpand() {
-    const next = !expanded;
-    setExpanded(next);
-    if (next && chunks === null) {
-      setLoadingChunks(true);
-      try {
-        // Chunks are stored in kb_chunks — fetch via meta if available,
-        // or show a placeholder message since there is no dedicated chunks API.
-        // We display meta.chunk_count if available.
-        setChunks([]); // Will show "no chunks" message — chunks API is not yet exposed
-      } finally {
-        setLoadingChunks(false);
-      }
-    }
-  }
 
   async function handleDelete() {
     setDeleting(true);
@@ -111,7 +89,7 @@ function DocumentRow({
       <div className="flex items-center gap-3 p-4">
         <button
           type="button"
-          onClick={handleExpand}
+          onClick={() => setExpanded((e) => !e)}
           className="flex flex-1 items-center gap-3 min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
           aria-expanded={expanded}
           aria-label={`${expanded ? "Ocultar" : "Ver"} chunks de ${doc.title}`}
@@ -164,31 +142,18 @@ function DocumentRow({
 
       {expanded && (
         <div className="border-t border-border/60 bg-muted/20 p-4">
-          {loadingChunks ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-            </div>
-          ) : chunks !== null && chunks.length > 0 ? (
-            <ul className="space-y-2">
-              {chunks.map((c) => (
-                <li
-                  key={c.chunk_index}
-                  className="rounded-md bg-card p-3 text-xs text-muted-foreground font-mono leading-relaxed"
-                >
-                  <span className="text-primary/60 mr-2">
-                    [{c.chunk_index}]
-                  </span>
-                  {c.content}
-                </li>
-              ))}
-            </ul>
+          {doc.content ? (
+            <p className="whitespace-pre-wrap text-xs text-muted-foreground leading-relaxed">
+              {doc.content}
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              Los chunks se almacenan internamente en la base de datos
-              vectorial.
-              {chunkCount !== null &&
-                ` Este documento tiene ${chunkCount} chunk(s).`}
+              Este documento no tiene contenido de texto.
+            </p>
+          )}
+          {chunkCount !== null && (
+            <p className="mt-3 text-xs text-muted-foreground/70">
+              {chunkCount} chunk(s) indexados para búsqueda semántica.
             </p>
           )}
         </div>
